@@ -18,14 +18,18 @@ pub enum CompilationError {
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
-    #[error("Type mismatch: expected {0} but got {1}")]
+    #[error("Type mismatch: expected {expected} but got {found}")]
     TypeMismatch { expected: Type, found: Type },
+
+    #[error(transparent)]
+    Io(#[from] std::io::Error),
 }
 
 #[derive(Clone, Debug)]
 enum Value {
     Int(i64),
     Bool(bool),
+    String(String),
 }
 
 impl Value {
@@ -33,23 +37,31 @@ impl Value {
         match self {
             Value::Int(_) => Type::Int,
             Value::Bool(_) => Type::Bool,
+            Value::String(_) => Type::String,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum Type {
+enum BasicType {
     Int,
     Bool,
+    String,
 }
 
-impl Display for Type {
+impl Display for BasicType {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Int => write!(f, "int"),
-            Type::Bool => write!(f, "bool"),
+            BasicType::Int => write!(f, "int"),
+            BasicType::Bool => write!(f, "bool"),
+            BasicType::String => write!(f, "string"),
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum Type {
+    Basic(BasicType),
 }
 
 impl Display for Value {
@@ -57,6 +69,7 @@ impl Display for Value {
         match self {
             Value::Int(val) => write!(f, "{val}"),
             Value::Bool(val) => write!(f, "{val}"),
+            Value::String(val) => write!(f, "{val}"),
         }
     }
 }
@@ -86,11 +99,12 @@ enum Operation {
 }
 
 impl Operation {
-    fn execute(&self, runtime: &mut Runtime) {
+    fn execute(&self, runtime: &mut Runtime) -> Result<(), RuntimeError> {
         match self {
             Self::Push(val) => runtime.push(val.clone()),
-            Self::Call(fn_ref) => runtime.call(*fn_ref),
+            Self::Call(fn_ref) => runtime.call(*fn_ref)?,
         }
+        Ok(())
     }
 }
 
@@ -99,10 +113,11 @@ struct Block {
 }
 
 impl Block {
-    fn execute(&self, runtime: &mut Runtime) {
+    fn execute(&self, runtime: &mut Runtime) -> Result<(), RuntimeError> {
         for op in &self.ops {
-            op.execute(runtime);
+            op.execute(runtime)?;
         }
+        Ok(())
     }
 
     fn from_items(
@@ -125,7 +140,7 @@ impl Block {
     }
 }
 
-type Function = Rc<dyn for<'a> Fn(&'a mut Runtime) -> Result<(), CompilationError> + 'static>;
+type Function = Rc<dyn for<'a> Fn(&'a mut Runtime) -> Result<(), RuntimeError> + 'static>;
 
 pub struct Runtime {
     function_names: HashMap<String, FunctionRef>,
@@ -142,9 +157,9 @@ impl Runtime {
         self.stack.pop().unwrap()
     }
 
-    fn call(&mut self, function_ref: FunctionRef) {
+    fn call(&mut self, function_ref: FunctionRef) -> Result<(), RuntimeError> {
         let function = Rc::clone(&self.functions[*function_ref]);
-        function(self);
+        function(self)
     }
 
     pub fn call_by_name(&mut self, name: &str) -> Result<(), CompilationError> {
@@ -162,13 +177,14 @@ pub struct RuntimeBuilder {
     functions: Vec<Option<Function>>,
 }
 
-macro_rules! register_binary_operator {
-    ($self:ident, $symbol:tt) => {
+macro_rules! register_arithmetic_operator {
+    ($self:ident, $symbol:tt, $ty:ident) => {
         $self.register_builtin_function(stringify!($symbol).into(), |runtime| {
             let b = runtime.pop();
             let a = runtime.pop();
             let result = match (a, b) {
                 (Value::Int(a), Value::Int(b)) => a $symbol b,
+
             };
             runtime.push(Value::Int(result as i64));
         });
@@ -205,16 +221,14 @@ impl RuntimeBuilder {
         body: Vec<parser::Item>,
     ) -> Result<(), CompilationError> {
         let block = Block::from_items(body, &self.function_names)?;
-        self.functions[*id] = Some(Rc::new(move |runtime| {
-            block.execute(runtime);
-        }));
+        self.functions[*id] = Some(Rc::new(move |runtime| block.execute(runtime)));
         Ok(())
     }
 
     pub fn register_builtin_function(
         &mut self,
         name: String,
-        body: impl for<'a> Fn(&'a mut Runtime) + 'static,
+        body: impl for<'a> Fn(&'a mut Runtime) -> Result<(), RuntimeError> + 'static,
     ) {
         let id = self.declare_function(name);
         self.functions[*id] = Some(Rc::new(body));
@@ -224,6 +238,7 @@ impl RuntimeBuilder {
         self.register_builtin_function("print".into(), |runtime| {
             let value = runtime.pop();
             println!("{value}");
+            Ok(())
         });
         self.register_builtin_function("input".into(), |runtime| {
             let mut stdin = std::io::stdin().lock();
@@ -247,11 +262,11 @@ impl RuntimeBuilder {
         self.register_builtin_function("pop".into(), |runtime| {
             runtime.pop();
         });
-        register_binary_operator!(self, +);
-        register_binary_operator!(self, -);
-        register_binary_operator!(self, *);
-        register_binary_operator!(self, /);
-        register_binary_operator!(self, ==);
+        register_arithmetic_operator!(self, +);
+        register_arithmetic_operator!(self, -);
+        register_arithmetic_operator!(self, *);
+        register_arithmetic_operator!(self, /);
+        register_arithmetic_operator!(self, ==);
     }
 
     pub fn build(self) -> Result<Runtime, CompilationError> {

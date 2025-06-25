@@ -1,0 +1,4 @@
+main: int = {
+	"Hello World" print
+	0
+}

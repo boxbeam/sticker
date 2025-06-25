@@ -1,4 +1,4 @@
 fn main {
 	input
-	1 == print
+	print
 }

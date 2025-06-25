@@ -1,10 +1,4 @@
-use std::{
-    collections::HashMap,
-    fmt::{Display, write},
-    io::BufRead,
-    ops::Deref,
-    rc::Rc,
-};
+use std::{collections::HashMap, fmt::Display, io::BufRead, ops::Deref, rc::Rc};
 
 use thiserror::Error;
 
@@ -18,8 +12,8 @@ pub enum CompilationError {
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
-    #[error("Type mismatch: expected {expected} but got {found}")]
-    TypeMismatch { expected: Type, found: Type },
+    #[error("Type error: {0}")]
+    Type(String),
 
     #[error(transparent)]
     Io(#[from] std::io::Error),
@@ -35,9 +29,9 @@ enum Value {
 impl Value {
     fn get_type(&self) -> Type {
         match self {
-            Value::Int(_) => Type::Int,
-            Value::Bool(_) => Type::Bool,
-            Value::String(_) => Type::String,
+            Value::Int(_) => Type::Basic(BasicType::Int),
+            Value::Bool(_) => Type::Basic(BasicType::Bool),
+            Value::String(_) => Type::Basic(BasicType::String),
         }
     }
 }
@@ -59,9 +53,26 @@ impl Display for BasicType {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone)]
 enum Type {
     Basic(BasicType),
+    Block { pop: Vec<Type>, push: Box<Type> },
+}
+
+impl Display for Type {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Type::Basic(basic_type) => write!(f, "{basic_type}"),
+            Type::Block { pop, push } => {
+                write!(f, "(")?;
+                for ty in pop {
+                    write!(f, "{ty} ")?;
+                }
+                write!(f, ":: {push})")?;
+                Ok(())
+            }
+        }
+    }
 }
 
 impl Display for Value {
@@ -178,15 +189,17 @@ pub struct RuntimeBuilder {
 }
 
 macro_rules! register_arithmetic_operator {
-    ($self:ident, $symbol:tt, $ty:ident) => {
+    ($self:ident, $symbol:tt) => {
         $self.register_builtin_function(stringify!($symbol).into(), |runtime| {
             let b = runtime.pop();
             let a = runtime.pop();
-            let result = match (a, b) {
+            let result = match (&a, &b) {
                 (Value::Int(a), Value::Int(b)) => a $symbol b,
+                _ => return Err(RuntimeError::Type(format!("Arithmetic operations can only be performed on numbers; received {} and {}", a.get_type(), b.get_type())))
 
             };
             runtime.push(Value::Int(result as i64));
+            Ok(())
         });
 
     }
@@ -243,30 +256,38 @@ impl RuntimeBuilder {
         self.register_builtin_function("input".into(), |runtime| {
             let mut stdin = std::io::stdin().lock();
             let mut buf = String::new();
-            stdin.read_line(&mut buf).unwrap();
-            let num: i64 = buf.trim().parse().unwrap();
-            runtime.push(Value::Int(num));
+            stdin.read_line(&mut buf)?;
+            runtime.push(Value::String(buf.trim().into()));
+            Ok(())
         });
         self.register_builtin_function("swap".into(), |runtime| {
             let b = runtime.pop();
             let a = runtime.pop();
             runtime.push(b);
             runtime.push(a);
+            Ok(())
         });
         self.register_builtin_function("dig".into(), |runtime| {
-            let Value::Int(n) = runtime.pop();
-            let n = runtime.stack.len() - n as usize;
+            let arg = runtime.pop();
+            let Value::Int(n) = &arg else {
+                return Err(RuntimeError::Type(format!(
+                    "Argument to `dig` must be an int; received {}",
+                    arg.get_type()
+                )));
+            };
+            let n = runtime.stack.len() - *n as usize;
             let val = runtime.stack.remove(n);
             runtime.stack.push(val);
+            Ok(())
         });
         self.register_builtin_function("pop".into(), |runtime| {
             runtime.pop();
+            Ok(())
         });
         register_arithmetic_operator!(self, +);
         register_arithmetic_operator!(self, -);
         register_arithmetic_operator!(self, *);
         register_arithmetic_operator!(self, /);
-        register_arithmetic_operator!(self, ==);
     }
 
     pub fn build(self) -> Result<Runtime, CompilationError> {

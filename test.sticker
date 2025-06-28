@@ -1,5 +1,11 @@
 fn main {
-	"Password: " print
-	{ "Correct!" } { "Incorrect!" } input "register" = if_else
-	println
+    10
+    {
+		clone println
+		1 -
+	}
+	{
+		clone 0 >
+	}
+	while
 }

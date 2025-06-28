@@ -70,7 +70,7 @@ parser! {
         '"' chars=(char*) '"' => Literal::String(chars.into_iter().collect())
     } -> Literal;
 
-    ident: ident=<{|c| c.is_ascii_alphabetic() || "+-*/$_=".contains(*c)}+> -> String { ident.into() }
+    ident: ident=<{|c| c.is_ascii_alphabetic() || "+-*/$_=<>".contains(*c)}+> -> String { ident.into() }
 
     block = "{" sep? #[convert(Block)] item$sep* sep? "}" -> Block;
 

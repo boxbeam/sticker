@@ -57,6 +57,10 @@ impl Value {
             Value::Block(_) => true,
         }
     }
+
+    fn is_falsy(&self) -> bool {
+        !self.is_truthy()
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -199,7 +203,7 @@ pub struct RuntimeBuilder {
 }
 
 macro_rules! register_arithmetic_operator {
-    ($self:ident, $symbol:tt) => {
+    ($self:ident, $symbol:tt, $typ:ident) => {
         $self.register_builtin_function(stringify!($symbol).into(), |runtime| {
             let b = runtime.pop();
             let a = runtime.pop();
@@ -208,7 +212,7 @@ macro_rules! register_arithmetic_operator {
                 _ => return Err(RuntimeError::Type(format!("Arithmetic operations can only be performed on numbers; received {} and {}", a.get_type(), b.get_type())))
 
             };
-            runtime.push(Value::Int(result as i64));
+            runtime.push(Value::$typ(result as _));
             Ok(())
         });
 
@@ -320,6 +324,17 @@ impl RuntimeBuilder {
             runtime.push(Value::Bool(a == b));
             Ok(())
         });
+        self.register_builtin_function("!=".into(), |runtime| {
+            let a = runtime.pop();
+            let b = runtime.pop();
+            runtime.push(Value::Bool(a != b));
+            Ok(())
+        });
+        self.register_builtin_function("!".into(), |runtime| {
+            let a = runtime.pop();
+            runtime.push(Value::Bool(a.is_falsy()));
+            Ok(())
+        });
         self.register_builtin_function("call".into(), |runtime| {
             let arg = runtime.pop();
             let Value::Block(fn_ref) = arg else {
@@ -368,10 +383,46 @@ impl RuntimeBuilder {
             }
             Ok(())
         });
-        register_arithmetic_operator!(self, +);
-        register_arithmetic_operator!(self, -);
-        register_arithmetic_operator!(self, *);
-        register_arithmetic_operator!(self, /);
+        self.register_builtin_function("while".into(), |runtime| {
+            let pred_block = runtime.pop();
+            let body_block = runtime.pop();
+            let Value::Block(pred_fn_ref) = pred_block else {
+                return Err(RuntimeError::Type(format!(
+                    "Second argument to `while` must be a block; received {}",
+                    pred_block.get_type()
+                )));
+            };
+            let Value::Block(body_fn_ref) = body_block else {
+                return Err(RuntimeError::Type(format!(
+                    "First argument to `while` must be a block; received {}",
+                    body_block.get_type()
+                )));
+            };
+
+            loop {
+                runtime.call(pred_fn_ref)?;
+                if runtime.pop().is_falsy() {
+                    break;
+                }
+                runtime.call(body_fn_ref)?;
+            }
+
+            Ok(())
+        });
+        self.register_builtin_function("clone".into(), |runtime| {
+            let val = runtime.pop();
+            runtime.push(val.clone());
+            runtime.push(val);
+            Ok(())
+        });
+        register_arithmetic_operator!(self, +, Int);
+        register_arithmetic_operator!(self, -, Int);
+        register_arithmetic_operator!(self, *, Int);
+        register_arithmetic_operator!(self, /, Int);
+        register_arithmetic_operator!(self, <, Bool);
+        register_arithmetic_operator!(self, >, Bool);
+        register_arithmetic_operator!(self, <=, Bool);
+        register_arithmetic_operator!(self, >=, Bool);
     }
 
     pub fn build(self) -> Result<Runtime, CompilationError> {

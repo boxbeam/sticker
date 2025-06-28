@@ -27,6 +27,7 @@ enum Value {
     Int(i64),
     Bool(bool),
     String(String),
+    Block(FunctionRef),
 }
 
 impl Value {
@@ -35,6 +36,7 @@ impl Value {
             Value::Int(_) => Type::Int,
             Value::Bool(_) => Type::Bool,
             Value::String(_) => Type::String,
+            Value::Block(_) => Type::Block,
         }
     }
 }
@@ -44,6 +46,7 @@ enum Type {
     Int,
     Bool,
     String,
+    Block,
 }
 
 impl Display for Type {
@@ -52,6 +55,7 @@ impl Display for Type {
             Type::Int => write!(f, "int"),
             Type::Bool => write!(f, "bool"),
             Type::String => write!(f, "string"),
+            Type::Block => write!(f, "block"),
         }
     }
 }
@@ -62,6 +66,7 @@ impl Display for Value {
             Value::Int(val) => write!(f, "{val}"),
             Value::Bool(val) => write!(f, "{val}"),
             Value::String(val) => write!(f, "{val}"),
+            Value::Block(_) => write!(f, "<block>"),
         }
     }
 }
@@ -74,7 +79,7 @@ impl From<parser::Literal> for Value {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct FunctionRef(usize);
 
 impl Deref for FunctionRef {
@@ -114,17 +119,22 @@ impl Block {
 
     fn from_items(
         items: Vec<parser::Item>,
-        function_names: &HashMap<String, FunctionRef>,
+        runtime_builder: &mut RuntimeBuilder,
     ) -> Result<Self, CompilationError> {
         let mut ops = vec![];
         for item in items {
             ops.push(match item {
                 parser::Item::Literal(literal) => Operation::Push(literal.into()),
                 parser::Item::Function(function) => {
-                    let fn_ref = function_names
+                    let fn_ref = runtime_builder
+                        .function_names
                         .get(&*function)
                         .ok_or_else(|| CompilationError::UnknownFunction(function.to_string()))?;
                     Operation::Call(*fn_ref)
+                }
+                parser::Item::Block(block) => {
+                    let fn_id = runtime_builder.declare_anonymous_function(block);
+                    Operation::Push(Value::Block(fn_id))
                 }
             });
         }
@@ -166,6 +176,7 @@ impl Runtime {
 #[derive(Default)]
 pub struct RuntimeBuilder {
     function_names: HashMap<String, FunctionRef>,
+    anonymous_functions: Vec<(FunctionRef, parser::Block)>,
     functions: Vec<Option<Function>>,
 }
 
@@ -203,18 +214,29 @@ impl RuntimeBuilder {
     }
 
     pub fn declare_function(&mut self, name: String) -> FunctionRef {
-        let id = FunctionRef(self.functions.len());
+        let id = self.reserve_function_id();
         self.function_names.insert(name, id);
-        self.functions.push(None);
         id
+    }
+
+    pub fn declare_anonymous_function(&mut self, block: parser::Block) -> FunctionRef {
+        let id = self.reserve_function_id();
+        self.anonymous_functions.push((id, block));
+        id
+    }
+
+    fn reserve_function_id(&mut self) -> FunctionRef {
+        let id = self.functions.len();
+        self.functions.push(None);
+        FunctionRef(id)
     }
 
     pub fn define_function(
         &mut self,
         id: FunctionRef,
-        body: Vec<parser::Item>,
+        body: parser::Block,
     ) -> Result<(), CompilationError> {
-        let block = Block::from_items(body, &self.function_names)?;
+        let block = Block::from_items(body.0, self)?;
         self.functions[*id] = Some(Rc::new(move |runtime| block.execute(runtime)));
         Ok(())
     }
@@ -288,6 +310,9 @@ impl RuntimeBuilder {
                     return Err(CompilationError::UnknownFunction(missing_func_name.into()));
                 }
             }
+        }
+        for (id, block) in self.anonymous_functions {
+            self.define_function(id, block);
         }
 
         Ok(Runtime {

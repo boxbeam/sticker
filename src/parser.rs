@@ -22,12 +22,16 @@ impl Deref for Function {
 pub enum Item {
     Literal(Literal),
     Function(Function),
+    Block(Block),
 }
+
+#[derive(Debug, Clone)]
+pub struct Block(pub Vec<Item>);
 
 #[derive(Debug, Clone)]
 pub struct FunctionDef {
     pub name: String,
-    pub body: Vec<Item>,
+    pub body: Block,
 }
 
 #[derive(Debug, Clone)]
@@ -55,13 +59,13 @@ parser! {
 
     ident: ident=<{|c| c.is_ascii_alphabetic() || "+-*/$_=".contains(*c)}+> -> String { ident.into() }
 
-    function_body = "{" sep? item$sep* sep? "}" -> Vec<Item>;
+    block = "{" sep? #[convert(Block)] item$sep* sep? "}" -> Block;
 
-    item = (#[convert(Item::Literal)] lit | #[convert(Item::Function)] function_call) -> Item;
+    item = (#[convert(Item::Literal)] lit | #[convert(Item::Function)] function_call | #[convert(Item::Block)] block) -> Item;
 
     function_call: name=ident -> Function { Function(name) }
 
-    function_def: "fn" sep name=ident sep? body=function_body -> FunctionDef {
+    function_def: "fn" sep name=ident sep? body=block -> FunctionDef {
         FunctionDef { name, body }
     }
 

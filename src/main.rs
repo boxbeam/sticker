@@ -1,7 +1,6 @@
 use std::fs;
 
-use parser::program;
-use untwine::{parser::parser, parser_repl, pretty::PrettyOptions};
+use untwine::{parser::parser, pretty::PrettyOptions};
 
 mod parser;
 mod runtime;

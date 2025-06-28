@@ -15,6 +15,9 @@ pub enum RuntimeError {
     #[error("Type error: {0}")]
     Type(String),
 
+    #[error("Unknown function name \"{0}\"")]
+    UnknownFunction(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -151,11 +154,11 @@ impl Runtime {
         function(self)
     }
 
-    pub fn call_by_name(&mut self, name: &str) -> Result<(), CompilationError> {
+    pub fn call_by_name(&mut self, name: &str) -> Result<(), RuntimeError> {
         let Some(fn_id) = self.function_names.get(name) else {
-            return Err(CompilationError::UnknownFunction(name.into()));
+            return Err(RuntimeError::UnknownFunction(name.into()));
         };
-        self.call(*fn_id);
+        self.call(*fn_id)?;
         Ok(())
     }
 }

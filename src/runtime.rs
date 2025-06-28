@@ -19,7 +19,7 @@ pub enum RuntimeError {
     Io(#[from] std::io::Error),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 enum Value {
     Int(i64),
     Bool(bool),
@@ -260,6 +260,12 @@ impl RuntimeBuilder {
         });
         self.register_builtin_function("pop".into(), |runtime| {
             runtime.pop();
+            Ok(())
+        });
+        self.register_builtin_function("=".into(), |runtime| {
+            let a = runtime.pop();
+            let b = runtime.pop();
+            runtime.push(Value::Bool(a == b));
             Ok(())
         });
         register_arithmetic_operator!(self, +);

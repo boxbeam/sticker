@@ -1,4 +1,7 @@
 fn main {
-	input
-	print
+	{
+		input
+		print
+	}
+	call
 }

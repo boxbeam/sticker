@@ -8,6 +8,9 @@ use crate::parser;
 pub enum CompilationError {
     #[error("Unknown function name \"{0}\"")]
     UnknownFunction(String),
+
+    #[error("Internal error: {0}")]
+    Internal(String),
 }
 
 #[derive(Debug, Error)]
@@ -293,26 +296,49 @@ impl RuntimeBuilder {
             runtime.push(Value::Bool(a == b));
             Ok(())
         });
+        self.register_builtin_function("call".into(), |runtime| {
+            let arg = runtime.pop();
+            let Value::Block(fn_ref) = arg else {
+                return Err(RuntimeError::Type(format!(
+                    "Argument to `call` must be a block; received {}",
+                    arg.get_type()
+                )));
+            };
+            runtime.call(fn_ref)?;
+            Ok(())
+        });
         register_arithmetic_operator!(self, +);
         register_arithmetic_operator!(self, -);
         register_arithmetic_operator!(self, *);
         register_arithmetic_operator!(self, /);
     }
 
-    pub fn build(self) -> Result<Runtime, CompilationError> {
+    pub fn build(mut self) -> Result<Runtime, CompilationError> {
+        loop {
+            let Some((id, block)) = self.anonymous_functions.pop() else {
+                break;
+            };
+            self.define_function(id, block)?;
+        }
         let mut functions = vec![];
-        for (id, function) in self.functions.into_iter().enumerate() {
+        for (id, function) in self.functions.iter().enumerate() {
             match function {
-                Some(f) => functions.push(f),
+                Some(f) => functions.push(f.clone()),
                 None => {
-                    let missing_func_name =
-                        self.function_names.iter().find(|f| **f.1 == id).unwrap().0;
-                    return Err(CompilationError::UnknownFunction(missing_func_name.into()));
+                    let missing_func_name = self
+                        .function_names
+                        .iter()
+                        .find_map(|(name, fn_ref)| (**fn_ref == id).then_some(name));
+                    match missing_func_name {
+                        Some(name) => return Err(CompilationError::UnknownFunction(name.into())),
+                        None => {
+                            return Err(CompilationError::Internal(format!(
+                                "Anonymous function {id} wasn't populated"
+                            )));
+                        }
+                    }
                 }
             }
-        }
-        for (id, block) in self.anonymous_functions {
-            self.define_function(id, block);
         }
 
         Ok(Runtime {

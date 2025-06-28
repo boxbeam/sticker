@@ -42,6 +42,15 @@ impl Value {
             Value::Block(_) => Type::Block,
         }
     }
+
+    fn is_truthy(&self) -> bool {
+        match self {
+            Value::Int(val) => *val != 0,
+            Value::Bool(val) => *val,
+            Value::String(val) => !val.is_empty(),
+            Value::Block(_) => true,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -307,6 +316,43 @@ impl RuntimeBuilder {
                 )));
             };
             runtime.call(fn_ref)?;
+            Ok(())
+        });
+        self.register_builtin_function("if".into(), |runtime| {
+            let pred = runtime.pop();
+            let block = runtime.pop();
+            let Value::Block(fn_ref) = block else {
+                return Err(RuntimeError::Type(format!(
+                    "First argument to `if` must be a block; received {}",
+                    block.get_type()
+                )));
+            };
+            if pred.is_truthy() {
+                runtime.call(fn_ref)?;
+            }
+            Ok(())
+        });
+        self.register_builtin_function("if_else".into(), |runtime| {
+            let pred = runtime.pop();
+            let else_block = runtime.pop();
+            let if_block = runtime.pop();
+            let Value::Block(else_fn_ref) = else_block else {
+                return Err(RuntimeError::Type(format!(
+                    "Second argument to `if_else` must be a block; received {}",
+                    else_block.get_type()
+                )));
+            };
+            let Value::Block(if_fn_ref) = if_block else {
+                return Err(RuntimeError::Type(format!(
+                    "First argument to `if_else` must be a block; received {}",
+                    if_block.get_type()
+                )));
+            };
+            if pred.is_truthy() {
+                runtime.call(if_fn_ref)?;
+            } else {
+                runtime.call(else_fn_ref)?;
+            }
             Ok(())
         });
         register_arithmetic_operator!(self, +);

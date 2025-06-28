@@ -1,3 +1,5 @@
 fn main {
-	"Hello World" print
+	"Password: " print
+	{ "Correct!" } { "Incorrect!" } input "register" = if_else
+	println
 }

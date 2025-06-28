@@ -42,9 +42,6 @@ pub struct Program {
 
 #[derive(Debug, Error)]
 pub enum Error {
-    #[error("Unknown escape sequence: \"{0}\"")]
-    UnknownEscapeSequence(String),
-
     #[error(transparent)]
     Parser(#[from] ParserError),
 
@@ -57,14 +54,14 @@ parser! {
 
     sep = #{|c| c.is_whitespace()}+;
 
-    char: seq=<"\\" . | [^ "\""]> -> char {
+    char: seq=<"\\" . | [^"\""]> -> char {
         match seq {
             "\\\\" => '\\',
             "\\n" => '\n',
             "\\r" => '\r',
             "\\t" => '\t',
-            _ if seq.len() == 1 => seq.chars().next().unwrap(),
-            _ => return Err(Error::UnknownEscapeSequence(seq.into()))
+            "\\\"" => '\"',
+            _ => seq.chars().last().unwrap()
         }
     }
 

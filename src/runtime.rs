@@ -1,4 +1,10 @@
-use std::{collections::HashMap, fmt::Display, io::BufRead, ops::Deref, rc::Rc};
+use std::{
+    collections::HashMap,
+    fmt::Display,
+    io::{BufRead, Write},
+    ops::Deref,
+    rc::Rc,
+};
 
 use thiserror::Error;
 
@@ -268,10 +274,16 @@ impl RuntimeBuilder {
     pub fn register_default_builtins(&mut self) {
         self.register_builtin_function("print".into(), |runtime| {
             let value = runtime.pop();
+            print!("{value}");
+            Ok(())
+        });
+        self.register_builtin_function("println".into(), |runtime| {
+            let value = runtime.pop();
             println!("{value}");
             Ok(())
         });
         self.register_builtin_function("input".into(), |runtime| {
+            std::io::stdout().flush()?;
             let mut stdin = std::io::stdin().lock();
             let mut buf = String::new();
             stdin.read_line(&mut buf)?;

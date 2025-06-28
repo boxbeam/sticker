@@ -136,7 +136,7 @@ impl Block {
                     Operation::Call(*fn_ref)
                 }
                 parser::Item::Block(block) => {
-                    let fn_id = runtime_builder.declare_anonymous_function(block);
+                    let fn_id = runtime_builder.define_anonymous_function(block)?;
                     Operation::Push(Value::Block(fn_id))
                 }
             });
@@ -179,7 +179,6 @@ impl Runtime {
 #[derive(Default)]
 pub struct RuntimeBuilder {
     function_names: HashMap<String, FunctionRef>,
-    anonymous_functions: Vec<(FunctionRef, parser::Block)>,
     functions: Vec<Option<Function>>,
 }
 
@@ -222,10 +221,13 @@ impl RuntimeBuilder {
         id
     }
 
-    pub fn declare_anonymous_function(&mut self, block: parser::Block) -> FunctionRef {
+    pub fn define_anonymous_function(
+        &mut self,
+        body: parser::Block,
+    ) -> Result<FunctionRef, CompilationError> {
         let id = self.reserve_function_id();
-        self.anonymous_functions.push((id, block));
-        id
+        self.define_function(id, body)?;
+        Ok(id)
     }
 
     fn reserve_function_id(&mut self) -> FunctionRef {
@@ -313,13 +315,7 @@ impl RuntimeBuilder {
         register_arithmetic_operator!(self, /);
     }
 
-    pub fn build(mut self) -> Result<Runtime, CompilationError> {
-        loop {
-            let Some((id, block)) = self.anonymous_functions.pop() else {
-                break;
-            };
-            self.define_function(id, block)?;
-        }
+    pub fn build(self) -> Result<Runtime, CompilationError> {
         let mut functions = vec![];
         for (id, function) in self.functions.iter().enumerate() {
             match function {

@@ -29,48 +29,26 @@ enum Value {
 impl Value {
     fn get_type(&self) -> Type {
         match self {
-            Value::Int(_) => Type::Basic(BasicType::Int),
-            Value::Bool(_) => Type::Basic(BasicType::Bool),
-            Value::String(_) => Type::Basic(BasicType::String),
+            Value::Int(_) => Type::Int,
+            Value::Bool(_) => Type::Bool,
+            Value::String(_) => Type::String,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-enum BasicType {
+enum Type {
     Int,
     Bool,
     String,
 }
 
-impl Display for BasicType {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            BasicType::Int => write!(f, "int"),
-            BasicType::Bool => write!(f, "bool"),
-            BasicType::String => write!(f, "string"),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-enum Type {
-    Basic(BasicType),
-    Block { pop: Vec<Type>, push: Box<Type> },
-}
-
 impl Display for Type {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Type::Basic(basic_type) => write!(f, "{basic_type}"),
-            Type::Block { pop, push } => {
-                write!(f, "(")?;
-                for ty in pop {
-                    write!(f, "{ty} ")?;
-                }
-                write!(f, ":: {push})")?;
-                Ok(())
-            }
+            Type::Int => write!(f, "int"),
+            Type::Bool => write!(f, "bool"),
+            Type::String => write!(f, "string"),
         }
     }
 }

@@ -87,6 +87,7 @@ impl From<parser::Literal> for Value {
     fn from(value: parser::Literal) -> Self {
         match value {
             parser::Literal::Int(val) => Self::Int(val),
+            parser::Literal::String(val) => Self::String(val),
         }
     }
 }

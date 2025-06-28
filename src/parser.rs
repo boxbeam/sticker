@@ -5,6 +5,7 @@ use untwine::prelude::*;
 #[derive(Debug, Clone)]
 pub enum Literal {
     Int(i64),
+    String(String),
 }
 
 #[derive(Debug, Clone)]
@@ -41,6 +42,9 @@ pub struct Program {
 
 #[derive(Debug, Error)]
 pub enum Error {
+    #[error("Unknown escape sequence: \"{0}\"")]
+    UnknownEscapeSequence(String),
+
     #[error(transparent)]
     Parser(#[from] ParserError),
 
@@ -53,8 +57,20 @@ parser! {
 
     sep = #{|c| c.is_whitespace()}+;
 
+    char: seq=<"\\" . | [^ "\""]> -> char {
+        match seq {
+            "\\\\" => '\\',
+            "\\n" => '\n',
+            "\\r" => '\r',
+            "\\t" => '\t',
+            _ if seq.len() == 1 => seq.chars().next().unwrap(),
+            _ => return Err(Error::UnknownEscapeSequence(seq.into()))
+        }
+    }
+
     lit = match {
-        num = <"-"? '0'-'9'+> => Literal::Int(num.parse()?)
+        num = <"-"? '0'-'9'+> => Literal::Int(num.parse()?),
+        '"' chars=(char*) '"' => Literal::String(chars.into_iter().collect())
     } -> Literal;
 
     ident: ident=<{|c| c.is_ascii_alphabetic() || "+-*/$_=".contains(*c)}+> -> String { ident.into() }

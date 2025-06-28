@@ -1,10 +1,3 @@
 fn main {
-	push_print_action
-	call
-}
-
-fn push_print_action {
-	{
-		69 print
-	}
+	"Hello World" print
 }

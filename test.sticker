@@ -1,8 +1,8 @@
 fn main {
     10
     {
-		$ println
+		^ println
 		1 -
 	}
-	{ $ 0 > } while
+	{ ^ 0 > } while
 }

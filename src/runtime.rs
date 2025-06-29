@@ -219,6 +219,22 @@ macro_rules! register_arithmetic_operator {
     }
 }
 
+macro_rules! cast {
+    ($val:expr, $ty:ident, $msg:literal $(, $arg:expr)*) => {
+        {
+            let value = $val;
+            match value{
+                Value::$ty(val) => Ok(val),
+                _ => {
+                    let formatted_msg = format_args!($msg, $($arg),*);
+                    let full_msg = format!("{formatted_msg}; expected `{}` but received `{}`", Type::$ty, value.get_type());
+                    Err(RuntimeError::Type(full_msg))
+                }
+            }
+        }
+    };
+}
+
 impl RuntimeBuilder {
     pub fn populate_from_ast(&mut self, ast: parser::Program) -> Result<(), CompilationError> {
         let funcs: Vec<_> = ast
@@ -336,75 +352,39 @@ impl RuntimeBuilder {
             Ok(())
         });
         self.register_builtin_function("call".into(), |runtime| {
-            let arg = runtime.pop();
-            let Value::Block(fn_ref) = arg else {
-                return Err(RuntimeError::Type(format!(
-                    "Argument to `call` must be a block; received {}",
-                    arg.get_type()
-                )));
-            };
+            let fn_ref = cast!(runtime.pop(), Block, "Invalid argument to `call`")?;
             runtime.call(fn_ref)?;
             Ok(())
         });
         self.register_builtin_function("if".into(), |runtime| {
             let pred = runtime.pop();
-            let block = runtime.pop();
-            let Value::Block(fn_ref) = block else {
-                return Err(RuntimeError::Type(format!(
-                    "First argument to `if` must be a block; received {}",
-                    block.get_type()
-                )));
-            };
+            let block = cast!(runtime.pop(), Block, "Invalid first argument to `if`")?;
             if pred.is_truthy() {
-                runtime.call(fn_ref)?;
+                runtime.call(block)?;
             }
             Ok(())
         });
         self.register_builtin_function("if_else".into(), |runtime| {
             let pred = runtime.pop();
-            let else_block = runtime.pop();
-            let if_block = runtime.pop();
-            let Value::Block(else_fn_ref) = else_block else {
-                return Err(RuntimeError::Type(format!(
-                    "Second argument to `if_else` must be a block; received {}",
-                    else_block.get_type()
-                )));
-            };
-            let Value::Block(if_fn_ref) = if_block else {
-                return Err(RuntimeError::Type(format!(
-                    "First argument to `if_else` must be a block; received {}",
-                    if_block.get_type()
-                )));
-            };
+            let else_block = cast!(runtime.pop(), Block, "Invalid second argument to `if_else`")?;
+            let if_block = cast!(runtime.pop(), Block, "Invalid first argument to `if_else`")?;
             if pred.is_truthy() {
-                runtime.call(if_fn_ref)?;
+                runtime.call(if_block)?;
             } else {
-                runtime.call(else_fn_ref)?;
+                runtime.call(else_block)?;
             }
             Ok(())
         });
         self.register_builtin_function("while".into(), |runtime| {
-            let pred_block = runtime.pop();
-            let body_block = runtime.pop();
-            let Value::Block(pred_fn_ref) = pred_block else {
-                return Err(RuntimeError::Type(format!(
-                    "Second argument to `while` must be a block; received {}",
-                    pred_block.get_type()
-                )));
-            };
-            let Value::Block(body_fn_ref) = body_block else {
-                return Err(RuntimeError::Type(format!(
-                    "First argument to `while` must be a block; received {}",
-                    body_block.get_type()
-                )));
-            };
+            let pred_block = cast!(runtime.pop(), Block, "Invalid second argument to `while`")?;
+            let body_block = cast!(runtime.pop(), Block, "Invalid first argument to `while`")?;
 
             loop {
-                runtime.call(pred_fn_ref)?;
+                runtime.call(pred_block)?;
                 if runtime.pop().is_falsy() {
                     break;
                 }
-                runtime.call(body_fn_ref)?;
+                runtime.call(body_block)?;
             }
 
             Ok(())

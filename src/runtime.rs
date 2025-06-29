@@ -409,7 +409,7 @@ impl RuntimeBuilder {
 
             Ok(())
         });
-        self.register_builtin_function("clone".into(), |runtime| {
+        self.register_builtin_function("$".into(), |runtime| {
             let val = runtime.pop();
             runtime.push(val.clone());
             runtime.push(val);

@@ -1,11 +1,8 @@
 fn main {
     10
     {
-		clone println
+		$ println
 		1 -
 	}
-	{
-		clone 0 >
-	}
-	while
+	{ $ 0 > } while
 }

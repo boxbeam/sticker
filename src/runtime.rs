@@ -21,6 +21,9 @@ pub enum CompilationError {
 
 #[derive(Debug, Error)]
 pub enum RuntimeError {
+    #[error("Tried to pop from an empty stack")]
+    EmptyStack,
+
     #[error("Type error: {0}")]
     Type(String),
 
@@ -178,8 +181,11 @@ impl Runtime {
         self.stack.push(value);
     }
 
-    fn pop(&mut self) -> Value {
-        self.stack.pop().unwrap()
+    fn pop(&mut self) -> Result<Value, RuntimeError> {
+        let Some(val) = self.stack.pop() else {
+            return Err(RuntimeError::EmptyStack);
+        };
+        Ok(val)
     }
 
     fn call(&mut self, function_ref: FunctionRef) -> Result<(), RuntimeError> {
@@ -205,8 +211,8 @@ pub struct RuntimeBuilder {
 macro_rules! register_arithmetic_operator {
     ($self:ident, $symbol:tt, $typ:ident) => {
         $self.register_builtin_function(stringify!($symbol).into(), |runtime| {
-            let b = runtime.pop();
-            let a = runtime.pop();
+            let b = runtime.pop()?;
+            let a = runtime.pop()?;
             let result = match (&a, &b) {
                 (Value::Int(a), Value::Int(b)) => a $symbol b,
                 _ => return Err(RuntimeError::Type(format!("Arithmetic operations can only be performed on numbers; received {} and {}", a.get_type(), b.get_type())))
@@ -293,12 +299,12 @@ impl RuntimeBuilder {
 
     pub fn register_default_builtins(&mut self) {
         self.register_builtin_function("print".into(), |runtime| {
-            let value = runtime.pop();
+            let value = runtime.pop()?;
             print!("{value}");
             Ok(())
         });
         self.register_builtin_function("println".into(), |runtime| {
-            let value = runtime.pop();
+            let value = runtime.pop()?;
             println!("{value}");
             Ok(())
         });
@@ -311,14 +317,14 @@ impl RuntimeBuilder {
             Ok(())
         });
         self.register_builtin_function("swap".into(), |runtime| {
-            let b = runtime.pop();
-            let a = runtime.pop();
+            let b = runtime.pop()?;
+            let a = runtime.pop()?;
             runtime.push(b);
             runtime.push(a);
             Ok(())
         });
         self.register_builtin_function("dig".into(), |runtime| {
-            let arg = runtime.pop();
+            let arg = runtime.pop()?;
             let Value::Int(n) = &arg else {
                 return Err(RuntimeError::Type(format!(
                     "Argument to `dig` must be an int; received {}",
@@ -331,43 +337,47 @@ impl RuntimeBuilder {
             Ok(())
         });
         self.register_builtin_function("pop".into(), |runtime| {
-            runtime.pop();
+            runtime.pop()?;
             Ok(())
         });
         self.register_builtin_function("=".into(), |runtime| {
-            let a = runtime.pop();
-            let b = runtime.pop();
+            let a = runtime.pop()?;
+            let b = runtime.pop()?;
             runtime.push(Value::Bool(a == b));
             Ok(())
         });
         self.register_builtin_function("!=".into(), |runtime| {
-            let a = runtime.pop();
-            let b = runtime.pop();
+            let a = runtime.pop()?;
+            let b = runtime.pop()?;
             runtime.push(Value::Bool(a != b));
             Ok(())
         });
         self.register_builtin_function("!".into(), |runtime| {
-            let a = runtime.pop();
+            let a = runtime.pop()?;
             runtime.push(Value::Bool(a.is_falsy()));
             Ok(())
         });
         self.register_builtin_function("call".into(), |runtime| {
-            let fn_ref = cast!(runtime.pop(), Block, "Invalid argument to `call`")?;
+            let fn_ref = cast!(runtime.pop()?, Block, "Invalid argument to `call`")?;
             runtime.call(fn_ref)?;
             Ok(())
         });
         self.register_builtin_function("if".into(), |runtime| {
-            let pred = runtime.pop();
-            let block = cast!(runtime.pop(), Block, "Invalid first argument to `if`")?;
+            let pred = runtime.pop()?;
+            let block = cast!(runtime.pop()?, Block, "Invalid first argument to `if`")?;
             if pred.is_truthy() {
                 runtime.call(block)?;
             }
             Ok(())
         });
         self.register_builtin_function("if_else".into(), |runtime| {
-            let pred = runtime.pop();
-            let else_block = cast!(runtime.pop(), Block, "Invalid second argument to `if_else`")?;
-            let if_block = cast!(runtime.pop(), Block, "Invalid first argument to `if_else`")?;
+            let pred = runtime.pop()?;
+            let else_block = cast!(
+                runtime.pop()?,
+                Block,
+                "Invalid second argument to `if_else`"
+            )?;
+            let if_block = cast!(runtime.pop()?, Block, "Invalid first argument to `if_else`")?;
             if pred.is_truthy() {
                 runtime.call(if_block)?;
             } else {
@@ -376,12 +386,12 @@ impl RuntimeBuilder {
             Ok(())
         });
         self.register_builtin_function("while".into(), |runtime| {
-            let pred_block = cast!(runtime.pop(), Block, "Invalid second argument to `while`")?;
-            let body_block = cast!(runtime.pop(), Block, "Invalid first argument to `while`")?;
+            let pred_block = cast!(runtime.pop()?, Block, "Invalid second argument to `while`")?;
+            let body_block = cast!(runtime.pop()?, Block, "Invalid first argument to `while`")?;
 
             loop {
                 runtime.call(pred_block)?;
-                if runtime.pop().is_falsy() {
+                if runtime.pop()?.is_falsy() {
                     break;
                 }
                 runtime.call(body_block)?;
@@ -390,7 +400,7 @@ impl RuntimeBuilder {
             Ok(())
         });
         self.register_builtin_function("^".into(), |runtime| {
-            let val = runtime.pop();
+            let val = runtime.pop()?;
             runtime.push(val.clone());
             runtime.push(val);
             Ok(())

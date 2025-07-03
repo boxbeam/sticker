@@ -1,8 +1,14 @@
+/**
+ * A simple loop!
+ */
+
+
+// main function :3
 fn main {
-    10
-    {
-		^ println
-		1 -
+	10 // loop counter
+	{
+		^ println // print current counter
+		1 - // decrease loop counter
 	}
-	{ ^ 0 > } while
+	{ ^ 0 > } while // run while counter is positive
 }

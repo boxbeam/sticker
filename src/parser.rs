@@ -52,7 +52,13 @@ pub enum Error {
 parser! {
     [error = Error]
 
-    sep = #{|c| c.is_whitespace()}+;
+    line_comment = #("//" [^"\n"]*);
+
+    block_comment = #("/*" ([^"*"] | "*" [^"/"])* "*/");
+
+    whitespace = #{|c| c.is_whitespace()}+;
+
+    sep = (line_comment | block_comment | whitespace)+;
 
     char: seq=<"\\" . | [^"\""]> -> char {
         match seq {
@@ -82,5 +88,5 @@ parser! {
         FunctionDef { name, body }
     }
 
-    pub program: functions=function_def$(sep?)* sep? -> Program { Program { functions } }
+    pub program: sep? functions=function_def$(sep?)* sep? -> Program { Program { functions } }
 }

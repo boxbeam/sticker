@@ -30,6 +30,12 @@ pub enum RuntimeError {
     #[error("Unknown function name \"{0}\"")]
     UnknownFunction(String),
 
+    #[error("Tried accessing out-of-range stack offset {n}; stack size is {stack_size}")]
+    OutOfStackRange { n: i64, stack_size: usize },
+
+    #[error("{0}")]
+    User(String),
+
     #[error(transparent)]
     Io(#[from] std::io::Error),
 }
@@ -124,10 +130,12 @@ enum Operation {
 impl Operation {
     fn execute(&self, runtime: &mut Runtime) -> Result<(), RuntimeError> {
         match self {
-            Self::Push(val) => runtime.push(val.clone()),
-            Self::Call(fn_ref) => runtime.call(*fn_ref)?,
+            Self::Push(val) => {
+                runtime.push(val.clone());
+                Ok(())
+            }
+            Self::Call(fn_ref) => runtime.call(*fn_ref),
         }
-        Ok(())
     }
 }
 
@@ -188,6 +196,62 @@ impl Runtime {
         Ok(val)
     }
 
+    fn stack_offset_to_index(&self, n: i64) -> Option<usize> {
+        let Ok(n_usize) = usize::try_from(n) else {
+            return None;
+        };
+        self.size().checked_sub(n_usize + 1)
+    }
+
+    fn try_dig(&self, n: i64) -> Option<&Value> {
+        let idx = self.stack_offset_to_index(n)?;
+        self.stack.get(idx)
+    }
+
+    fn dig(&self, n: i64) -> Result<&Value, RuntimeError> {
+        self.try_dig(n)
+            .ok_or_else(|| RuntimeError::OutOfStackRange {
+                n,
+                stack_size: self.size(),
+            })
+    }
+
+    fn bury(&mut self, n: i64, mut value: Value) -> Result<Value, RuntimeError> {
+        let Some(idx) = self.stack_offset_to_index(n) else {
+            return Err(RuntimeError::OutOfStackRange {
+                n,
+                stack_size: self.size(),
+            });
+        };
+        std::mem::swap(&mut self.stack[idx], &mut value);
+        Ok(value)
+    }
+
+    fn insert(&mut self, n: i64, value: Value) -> Result<(), RuntimeError> {
+        let Some(idx) = self.stack_offset_to_index(n) else {
+            return Err(RuntimeError::OutOfStackRange {
+                n,
+                stack_size: self.size(),
+            });
+        };
+        self.stack.insert(idx.saturating_sub(1), value);
+        Ok(())
+    }
+
+    fn top(&self, n: i64) -> Result<&[Value], RuntimeError> {
+        let Some(idx) = self.stack_offset_to_index(n) else {
+            return Err(RuntimeError::OutOfStackRange {
+                n,
+                stack_size: self.size(),
+            });
+        };
+        Ok(&self.stack[idx..])
+    }
+
+    fn size(&self) -> usize {
+        self.stack.len()
+    }
+
     fn call(&mut self, function_ref: FunctionRef) -> Result<(), RuntimeError> {
         let function = Rc::clone(&self.functions[*function_ref]);
         function(self)
@@ -208,21 +272,31 @@ pub struct RuntimeBuilder {
     functions: Vec<Option<Function>>,
 }
 
-macro_rules! register_arithmetic_operator {
+macro_rules! register_numeric_operator {
     ($self:ident, $symbol:tt, $typ:ident) => {
         $self.register_builtin_function(stringify!($symbol).into(), |runtime| {
             let b = runtime.pop()?;
             let a = runtime.pop()?;
             let result = match (&a, &b) {
                 (Value::Int(a), Value::Int(b)) => a $symbol b,
-                _ => return Err(RuntimeError::Type(format!("Arithmetic operations can only be performed on numbers; received {} and {}", a.get_type(), b.get_type())))
+                _ => return Err(RuntimeError::Type(format!("Numeric operations can only be performed on numbers; received {} and {}", a.get_type(), b.get_type())))
 
             };
             runtime.push(Value::$typ(result as _));
             Ok(())
         });
-
     }
+}
+
+macro_rules! register_boolean_operator {
+    ($self:ident, $symbol:tt) => {
+        $self.register_builtin_function(stringify!($symbol).into(), |runtime| {
+            let b = runtime.pop()?;
+            let a = runtime.pop()?;
+            runtime.push(Value::Bool(b.is_truthy() $symbol a.is_truthy()));
+            Ok(())
+        });
+    };
 }
 
 macro_rules! cast {
@@ -284,7 +358,10 @@ impl RuntimeBuilder {
         body: parser::Block,
     ) -> Result<(), CompilationError> {
         let block = Block::from_items(body.0, self)?;
-        self.functions[*id] = Some(Rc::new(move |runtime| block.execute(runtime)));
+        self.functions[*id] = Some(Rc::new(move |runtime| {
+            block.execute(runtime)?;
+            Ok(())
+        }));
         Ok(())
     }
 
@@ -298,6 +375,13 @@ impl RuntimeBuilder {
     }
 
     pub fn register_default_builtins(&mut self) {
+        self.register_builtin_function("dbg".into(), |runtime| {
+            println!("Current stack:\n{:?}", runtime.stack);
+            Ok(())
+        });
+        self.register_builtin_function("error".into(), |runtime| {
+            Err::<(), _>(RuntimeError::User(runtime.pop()?.to_string()))
+        });
         self.register_builtin_function("print".into(), |runtime| {
             let value = runtime.pop()?;
             print!("{value}");
@@ -317,23 +401,36 @@ impl RuntimeBuilder {
             Ok(())
         });
         self.register_builtin_function("swap".into(), |runtime| {
-            let b = runtime.pop()?;
-            let a = runtime.pop()?;
-            runtime.push(b);
-            runtime.push(a);
+            let n = cast!(runtime.pop()?, Int, "Invalid first argument to `dig`")?;
+            let top = runtime.pop()?;
+            let bottom = runtime.bury(n, top)?;
+            runtime.push(bottom);
             Ok(())
         });
         self.register_builtin_function("dig".into(), |runtime| {
-            let arg = runtime.pop()?;
-            let Value::Int(n) = &arg else {
-                return Err(RuntimeError::Type(format!(
-                    "Argument to `dig` must be an int; received {}",
-                    arg.get_type()
-                )));
-            };
-            let n = runtime.stack.len() - *n as usize;
-            let val = runtime.stack.remove(n);
-            runtime.stack.push(val);
+            let n = cast!(runtime.pop()?, Int, "Invalid first argument to `dig`")?;
+            let val = runtime.dig(n)?;
+            runtime.push(val.clone());
+            Ok(())
+        });
+        self.register_builtin_function("bury".into(), |runtime| {
+            let n = cast!(runtime.pop()?, Int, "Invalid first argument to `bury`")?;
+            let val = runtime.pop()?;
+            runtime.bury(n, val)?;
+            Ok(())
+        });
+        self.register_builtin_function("insert".into(), |runtime| {
+            let n = cast!(runtime.pop()?, Int, "Invalid first argument to `bury`")?;
+            let val = runtime.pop()?;
+            runtime.insert(n, val)?;
+            Ok(())
+        });
+        self.register_builtin_function("top".into(), |runtime| {
+            let n = cast!(runtime.pop()?, Int, "Invalid first argumetn to `clone`")?;
+            let top = runtime.top(n)?.to_vec();
+            for val in top {
+                runtime.push(val);
+            }
             Ok(())
         });
         self.register_builtin_function("pop".into(), |runtime| {
@@ -363,22 +460,24 @@ impl RuntimeBuilder {
             Ok(())
         });
         self.register_builtin_function("if".into(), |runtime| {
-            let pred = runtime.pop()?;
-            let block = cast!(runtime.pop()?, Block, "Invalid first argument to `if`")?;
-            if pred.is_truthy() {
-                runtime.call(block)?;
+            let pred_block = cast!(runtime.pop()?, Block, "Invalid second argument to `if`")?;
+            let body_block = cast!(runtime.pop()?, Block, "Invalid first argument to `if`")?;
+            runtime.call(pred_block)?;
+            if runtime.pop()?.is_truthy() {
+                runtime.call(body_block)?;
             }
             Ok(())
         });
         self.register_builtin_function("if_else".into(), |runtime| {
-            let pred = runtime.pop()?;
+            let pred_block = cast!(runtime.pop()?, Block, "Invalid third argument to `if_else`")?;
             let else_block = cast!(
                 runtime.pop()?,
                 Block,
                 "Invalid second argument to `if_else`"
             )?;
             let if_block = cast!(runtime.pop()?, Block, "Invalid first argument to `if_else`")?;
-            if pred.is_truthy() {
+            runtime.call(pred_block)?;
+            if runtime.pop()?.is_truthy() {
                 runtime.call(if_block)?;
             } else {
                 runtime.call(else_block)?;
@@ -405,14 +504,21 @@ impl RuntimeBuilder {
             runtime.push(val);
             Ok(())
         });
-        register_arithmetic_operator!(self, +, Int);
-        register_arithmetic_operator!(self, -, Int);
-        register_arithmetic_operator!(self, *, Int);
-        register_arithmetic_operator!(self, /, Int);
-        register_arithmetic_operator!(self, <, Bool);
-        register_arithmetic_operator!(self, >, Bool);
-        register_arithmetic_operator!(self, <=, Bool);
-        register_arithmetic_operator!(self, >=, Bool);
+        register_numeric_operator!(self, +, Int);
+        register_numeric_operator!(self, -, Int);
+        register_numeric_operator!(self, *, Int);
+        register_numeric_operator!(self, /, Int);
+        register_numeric_operator!(self, <<, Int);
+        register_numeric_operator!(self, >>, Int);
+        register_numeric_operator!(self, &, Int);
+        register_numeric_operator!(self, |, Int);
+        register_numeric_operator!(self, %, Int);
+        register_numeric_operator!(self, <, Bool);
+        register_numeric_operator!(self, >, Bool);
+        register_numeric_operator!(self, <=, Bool);
+        register_numeric_operator!(self, >=, Bool);
+        register_boolean_operator!(self, &&);
+        register_boolean_operator!(self, ||);
     }
 
     pub fn build(self) -> Result<Runtime, CompilationError> {
